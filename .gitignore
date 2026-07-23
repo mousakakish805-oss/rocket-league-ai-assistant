@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Env / secrets
+.env
+*.env.local
+
+# Playwright
+backend/ms-playwright/
+
+# Debug / scratch artifacts (not for production)
+backend/debug_output.html
+frontend/_preview.html
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Node (if you add tooling to frontend later)
+node_modules/
