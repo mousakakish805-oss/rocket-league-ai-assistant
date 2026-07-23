@@ -1,0 +1,18 @@
+# Render Blueprint — auto-configures the backend web service.
+# In Render: New + -> Blueprint -> pick this repo. Everything below is applied
+# automatically; you only paste OPENAI_API_KEY when prompted (it's kept secret).
+services:
+  - type: web
+    name: rl-coach-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    # Free tier works for testing but has 512MB RAM and sleeps when idle, which
+    # can be tight for a headful browser. Bump to "starter" if scrapes crash.
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false            # you enter this in the dashboard; never committed
+      - key: ALLOWED_ORIGINS
+        value: "*"             # tighten to your Netlify URL after the frontend is live
