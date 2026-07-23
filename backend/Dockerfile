@@ -10,7 +10,8 @@ RUN playwright install --with-deps chromium
 
 # xvfb provides a virtual display so the scraper can run a *headful* Chromium
 # on a server with no real screen -- headful is what gets past Cloudflare.
-RUN apt-get update && apt-get install -y --no-install-recommends xvfb \
+# xauth is required by the `xvfb-run` wrapper (without it: "xauth command not found").
+RUN apt-get update && apt-get install -y --no-install-recommends xvfb xauth \
     && rm -rf /var/lib/apt/lists/*
 
 COPY . .
