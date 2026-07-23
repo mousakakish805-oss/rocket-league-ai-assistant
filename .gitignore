@@ -22,3 +22,6 @@ frontend/_preview.html
 
 # Node (if you add tooling to frontend later)
 node_modules/
+
+# Local Claude settings
+.claude/settings.local.json
