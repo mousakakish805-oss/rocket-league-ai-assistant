@@ -1,5 +1,7 @@
 import asyncio
 import os
+import urllib.parse
+import urllib.request
 
 from playwright.async_api import async_playwright
 
@@ -58,6 +60,57 @@ def _proxy_config():
     return cfg
 
 
+# ScraperAPI: does the fetch on THEIR infrastructure (residential IPs + Cloudflare
+# handling) and returns the rendered HTML. This is what lets a datacenter host
+# (Render) scrape successfully -- the request exits from ScraperAPI's trusted IPs,
+# not Render's blocked one. Free tier: ~1000 credits/month. Set RL_SCRAPERAPI_KEY
+# to enable; leave unset to scrape directly with Playwright.
+SCRAPERAPI_KEY = os.getenv("RL_SCRAPERAPI_KEY")
+# "premium" (residential) is usually needed for Cloudflare; bump to ultra_premium
+# via RL_SCRAPERAPI_LEVEL=ultra if premium still gets blocked.
+SCRAPERAPI_LEVEL = os.getenv("RL_SCRAPERAPI_LEVEL", "premium")
+
+
+def _fetch_via_scraperapi(target_url: str) -> str:
+    """Blocking GET through ScraperAPI. Runs in a thread (see caller)."""
+    params = {
+        "api_key": SCRAPERAPI_KEY,
+        "url": target_url,
+        "render": "true",          # execute the page's JS (clears CF challenge)
+        "country_code": "us",
+    }
+    if SCRAPERAPI_LEVEL == "ultra":
+        params["ultra_premium"] = "true"
+    else:
+        params["premium"] = "true"
+
+    api_url = "https://api.scraperapi.com/?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(api_url, headers={"User-Agent": "rl-coach/1.0"})
+    with urllib.request.urlopen(req, timeout=75) as resp:
+        return resp.read().decode("utf-8", errors="replace")
+
+
+async def _try_scraperapi(target_url: str) -> str | None:
+    """Fetch via ScraperAPI if configured and the result looks like a real page.
+    Returns HTML on success, or None to signal 'fall back to direct scraping'."""
+    if not SCRAPERAPI_KEY:
+        return None
+    try:
+        print("[scrape] via ScraperAPI")
+        html = await asyncio.to_thread(_fetch_via_scraperapi, target_url)
+    except Exception as e:
+        print(f"[scrape] ScraperAPI request failed: {e}")
+        return None
+    # Only accept it if it's the real profile, not a challenge/error page.
+    if any(m in html[:4000].lower() for m in BLOCK_TITLE_MARKERS):
+        print("[scrape] ScraperAPI returned a challenge page")
+        return None
+    if "ratings-grid" in html or "text-accent" in html:
+        return html
+    print("[scrape] ScraperAPI response missing expected profile markup")
+    return None
+
+
 async def scrape_rocket_league_stats(platform: str, username: str, retries: int = 2) -> str:
     """
     Navigates to Rocket League Tracker for a specific platform & username using
@@ -68,6 +121,11 @@ async def scrape_rocket_league_stats(platform: str, username: str, retries: int 
     Cloudflare challenge never clears (title stays on the challenge page).
     """
     url = f"https://rocketleague.tracker.network/rocket-league/profile/{platform}/{username}/overview"
+
+    # Preferred path on a server: let ScraperAPI fetch it from a residential IP.
+    scraperapi_html = await _try_scraperapi(url)
+    if scraperapi_html is not None:
+        return scraperapi_html
 
     last_error = None
 
