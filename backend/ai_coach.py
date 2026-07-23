@@ -8,8 +8,20 @@ from prompts import (
     build_initial_analysis_message,
 )
 
-# Initialize OpenAI client (reads from the OPENAI_API_KEY environment variable)
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Lazily create the OpenAI client on first use rather than at import. If
+# OPENAI_API_KEY is missing/blank, the OpenAI() constructor raises -- doing that
+# at import time would crash the ENTIRE backend on startup (so even scraping and
+# manual entry would go down). Lazy init keeps the server booting; only the coach
+# calls fail, and they fail gracefully with a message (see the try/except below).
+_client = None
+
+
+def _get_client() -> OpenAI:
+    global _client
+    if _client is None:
+        _client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    return _client
+
 
 MODEL = "gpt-4o"
 
@@ -32,7 +44,7 @@ def generate_coaching_response(player_profile: dict, query: str) -> str:
     )
 
     try:
-        response = client.chat.completions.create(
+        response = _get_client().chat.completions.create(
             model=MODEL,
             messages=[
                 {"role": "system", "content": COACH_SYSTEM_PROMPT},
@@ -55,7 +67,7 @@ def generate_initial_analysis(player_profile: dict) -> str:
     user_message = build_initial_analysis_message(player_profile)
 
     try:
-        response = client.chat.completions.create(
+        response = _get_client().chat.completions.create(
             model=MODEL,
             messages=[
                 {"role": "system", "content": COACH_SYSTEM_PROMPT},
