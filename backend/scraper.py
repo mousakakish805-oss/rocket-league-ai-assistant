@@ -35,6 +35,28 @@ BLOCK_TITLE_MARKERS = ("just a moment", "attention required", "access denied")
 # headless (faster locally, but far more likely to be blocked).
 HEADLESS = os.getenv("RL_SCRAPER_HEADLESS", "0") == "1"
 
+# Optional proxy. Cloudflare blocks datacenter IPs (cloud hosts like Render) on
+# sight, before it ever inspects the browser -- so on a server the only way to
+# scrape successfully is to exit through a RESIDENTIAL IP via a proxy. Set these
+# env vars to your proxy provider's endpoint/credentials to enable it. When
+# unset, scraping goes direct (works from a residential machine, blocked from a
+# datacenter).
+PROXY_SERVER = os.getenv("RL_PROXY_SERVER")          # e.g. "http://gate.provider.com:7000"
+PROXY_USERNAME = os.getenv("RL_PROXY_USERNAME")
+PROXY_PASSWORD = os.getenv("RL_PROXY_PASSWORD")
+
+
+def _proxy_config():
+    """Playwright proxy dict from env, or None if no proxy is configured."""
+    if not PROXY_SERVER:
+        return None
+    cfg = {"server": PROXY_SERVER}
+    if PROXY_USERNAME:
+        cfg["username"] = PROXY_USERNAME
+    if PROXY_PASSWORD:
+        cfg["password"] = PROXY_PASSWORD
+    return cfg
+
 
 async def scrape_rocket_league_stats(platform: str, username: str, retries: int = 2) -> str:
     """
@@ -55,7 +77,7 @@ async def scrape_rocket_league_stats(platform: str, username: str, retries: int 
                 headless=HEADLESS,
                 args=["--disable-blink-features=AutomationControlled"],
             )
-            context = await browser.new_context(
+            context_opts = dict(
                 user_agent=(
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                     "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
@@ -65,6 +87,10 @@ async def scrape_rocket_league_stats(platform: str, username: str, retries: int 
                 timezone_id="America/New_York",
                 extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
             )
+            proxy = _proxy_config()
+            if proxy:
+                context_opts["proxy"] = proxy
+            context = await browser.new_context(**context_opts)
             await context.add_init_script(STEALTH_JS)
             page = await context.new_page()
 
