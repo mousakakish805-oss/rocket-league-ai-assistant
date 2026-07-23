@@ -123,9 +123,17 @@ async def scrape_rocket_league_stats(platform: str, username: str, retries: int 
     url = f"https://rocketleague.tracker.network/rocket-league/profile/{platform}/{username}/overview"
 
     # Preferred path on a server: let ScraperAPI fetch it from a residential IP.
-    scraperapi_html = await _try_scraperapi(url)
-    if scraperapi_html is not None:
-        return scraperapi_html
+    # When a ScraperAPI key is configured we rely on it exclusively -- the direct
+    # browser scrape below is blocked from datacenter IPs anyway, so falling back
+    # to it just burns ~90s before failing. Fail fast to the manual form instead.
+    if SCRAPERAPI_KEY:
+        scraperapi_html = await _try_scraperapi(url)
+        if scraperapi_html is not None:
+            return scraperapi_html
+        raise ScrapeBlockedError(
+            "ScraperAPI did not return the profile (likely Cloudflare, credits, or "
+            "proxy level). Try setting RL_SCRAPERAPI_LEVEL=ultra, or use manual entry."
+        )
 
     last_error = None
 
