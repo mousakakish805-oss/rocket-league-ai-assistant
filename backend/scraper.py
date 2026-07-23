@@ -101,13 +101,51 @@ async def _try_scraperapi(target_url: str) -> str | None:
     except Exception as e:
         print(f"[scrape] ScraperAPI request failed: {e}")
         return None
-    # Only accept it if it's the real profile, not a challenge/error page.
+    return _accept_api_html(html, "ScraperAPI")
+
+
+# ZenRows: another scraping API (residential proxies + JS render), often better
+# at Cloudflare than ScraperAPI's free tier. Free trial: ~1000 credits. Set
+# RL_ZENROWS_KEY to enable; it's tried BEFORE ScraperAPI when both are set.
+ZENROWS_KEY = os.getenv("RL_ZENROWS_KEY")
+
+
+def _fetch_via_zenrows(target_url: str) -> str:
+    """Blocking GET through ZenRows. Runs in a thread (see caller)."""
+    params = {
+        "apikey": ZENROWS_KEY,
+        "url": target_url,
+        "js_render": "true",       # headless browser (clears CF JS challenge)
+        "premium_proxy": "true",   # residential IPs (gets past IP blocks)
+        "proxy_country": "us",
+    }
+    api_url = "https://api.zenrows.com/v1/?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(api_url, headers={"User-Agent": "rl-coach/1.0"})
+    with urllib.request.urlopen(req, timeout=90) as resp:
+        return resp.read().decode("utf-8", errors="replace")
+
+
+async def _try_zenrows(target_url: str) -> str | None:
+    if not ZENROWS_KEY:
+        return None
+    try:
+        print("[scrape] via ZenRows")
+        html = await asyncio.to_thread(_fetch_via_zenrows, target_url)
+    except Exception as e:
+        print(f"[scrape] ZenRows request failed: {e}")
+        return None
+    return _accept_api_html(html, "ZenRows")
+
+
+def _accept_api_html(html: str, source: str) -> str | None:
+    """Accept scraping-API HTML only if it's the real profile, not a
+    challenge/error page. Returns the HTML, or None to signal failure."""
     if any(m in html[:4000].lower() for m in BLOCK_TITLE_MARKERS):
-        print("[scrape] ScraperAPI returned a challenge page")
+        print(f"[scrape] {source} returned a challenge page")
         return None
     if "ratings-grid" in html or "text-accent" in html:
         return html
-    print("[scrape] ScraperAPI response missing expected profile markup")
+    print(f"[scrape] {source} response missing expected profile markup")
     return None
 
 
@@ -122,17 +160,20 @@ async def scrape_rocket_league_stats(platform: str, username: str, retries: int 
     """
     url = f"https://rocketleague.tracker.network/rocket-league/profile/{platform}/{username}/overview"
 
-    # Preferred path on a server: let ScraperAPI fetch it from a residential IP.
-    # When a ScraperAPI key is configured we rely on it exclusively -- the direct
-    # browser scrape below is blocked from datacenter IPs anyway, so falling back
-    # to it just burns ~90s before failing. Fail fast to the manual form instead.
-    if SCRAPERAPI_KEY:
-        scraperapi_html = await _try_scraperapi(url)
-        if scraperapi_html is not None:
-            return scraperapi_html
+    # Preferred path on a server: let a scraping API fetch it from a residential
+    # IP (ZenRows first, then ScraperAPI). When either key is configured we rely
+    # on them exclusively -- the direct browser scrape below is blocked from
+    # datacenter IPs anyway, so falling back to it just burns ~90s before
+    # failing. Fail fast to the manual form instead.
+    if ZENROWS_KEY or SCRAPERAPI_KEY:
+        api_html = await _try_zenrows(url)
+        if api_html is None:
+            api_html = await _try_scraperapi(url)
+        if api_html is not None:
+            return api_html
         raise ScrapeBlockedError(
-            "ScraperAPI did not return the profile (likely Cloudflare, credits, or "
-            "proxy level). Try setting RL_SCRAPERAPI_LEVEL=ultra, or use manual entry."
+            "Scraping API did not return the profile (Cloudflare, credits, or key "
+            "issue -- check the logs). Use manual entry to get coaching."
         )
 
     last_error = None
