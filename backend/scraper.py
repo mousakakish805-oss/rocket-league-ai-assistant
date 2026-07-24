@@ -119,13 +119,13 @@ def _fetch_via_zenrows(target_url: str) -> str:
         "premium_proxy": "true",   # residential IPs (gets past IP blocks)
         "proxy_country": "us",
         # Tracker is a Vue SPA: the page shell loads first, then the ranks render
-        # a moment later. Without this, ZenRows returns the shell before the ranks
-        # appear. Wait for the rank grid element so the data is actually present.
-        "wait_for": ".ratings-grid",
+        # a moment later. A fixed post-load wait lets the ranks populate. (An
+        # element wait_for could hang until timeout, so we use a bounded wait.)
+        "wait": "12000",
     }
     api_url = "https://api.zenrows.com/v1/?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(api_url, headers={"User-Agent": "rl-coach/1.0"})
-    with urllib.request.urlopen(req, timeout=90) as resp:
+    with urllib.request.urlopen(req, timeout=120) as resp:
         return resp.read().decode("utf-8", errors="replace")
 
 
