@@ -121,11 +121,11 @@ def _fetch_via_zenrows(target_url: str) -> str:
         # Tracker is a Vue SPA: the page shell loads first, then the ranks render
         # a moment later. A fixed post-load wait lets the ranks populate. (An
         # element wait_for could hang until timeout, so we use a bounded wait.)
-        "wait": "12000",
+        "wait": "18000",
     }
     api_url = "https://api.zenrows.com/v1/?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(api_url, headers={"User-Agent": "rl-coach/1.0"})
-    with urllib.request.urlopen(req, timeout=120) as resp:
+    with urllib.request.urlopen(req, timeout=140) as resp:
         return resp.read().decode("utf-8", errors="replace")
 
 
@@ -157,14 +157,25 @@ async def debug_scrape_zenrows(platform: str, username: str) -> dict:
         info["error"] = f"{type(e).__name__}: {e}"
         return info
     m = re.search(r"<title[^>]*>(.*?)</title>", html, re.S | re.I)
+    markers = [
+        "ratings-grid", "text-accent", "rating__title", "Ranked Duel",
+        "Ranked Doubles", "Ranked Standard", "Tier ", "__NUXT__",
+        "__INITIAL_STATE__", "window.__", "data-vm-ssr", "segment",
+        "mmr", "playlist", "tierName", "trackercdn.com/cdn/tracker.gg/rocket-league/ranks",
+    ]
+    lower = html.lower()
+    idx = lower.find("ranked duel")
+    if idx == -1:
+        idx = lower.find("ranked ")
+    if idx == -1:
+        idx = lower.find("mmr")
     info.update(
         ok=True,
         length=len(html),
         title=(m.group(1).strip()[:120] if m else None),
-        has_ratings_grid="ratings-grid" in html,
-        has_text_accent="text-accent" in html,
         looks_like_challenge=any(mk in html[:4000].lower() for mk in BLOCK_TITLE_MARKERS),
-        snippet=html[:200],
+        markers={mk: (mk.lower() in lower) for mk in markers},
+        rank_context=(html[max(0, idx - 120): idx + 500] if idx != -1 else None),
     )
     return info
 
