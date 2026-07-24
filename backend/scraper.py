@@ -161,42 +161,40 @@ def _fetch_via_zenrows_raw(target_url: str, render: bool) -> str:
         return resp.read().decode("utf-8", errors="replace")
 
 
-async def debug_scrape_zenrows(platform: str, username: str) -> dict:
-    """Diagnostic: fetch Tracker's internal JSON API via ZenRows and show the
-    parsed playlist ranks. Temporary."""
+async def fetch_profile_via_api(platform: str, username: str) -> dict:
+    """
+    Fetch Tracker's internal JSON API through ZenRows (residential IP + Cloudflare
+    handling) and return the raw parsed JSON. This is the reliable server-side
+    path: no page rendering, just clean structured data.
+    """
     target = TRACKER_API.format(platform=platform, username=username)
-    info = {"target": target, "has_zenrows_key": bool(ZENROWS_KEY)}
-    if not ZENROWS_KEY:
-        info["note"] = "RL_ZENROWS_KEY not set"
-        return info
-    try:
-        body = await asyncio.to_thread(_fetch_via_zenrows_raw, target, False)
-    except Exception as e:
-        info["ok"] = False
-        info["error"] = f"{type(e).__name__}: {e}"
-        return info
-    info["length"] = len(body)
-    info["head"] = body[:600]
-    try:
-        j = json.loads(body)
-    except Exception as e:
-        info["is_json"] = False
-        info["json_error"] = str(e)
-        return info
-    info["is_json"] = True
-    segs = (j.get("data") or {}).get("segments") or []
-    info["segment_count"] = len(segs)
-    playlists = []
-    for s in segs:
-        if s.get("type") != "playlist":
-            continue
-        meta = s.get("metadata") or {}
-        st = s.get("stats") or {}
-        tier = ((st.get("tier") or {}).get("metadata") or {}).get("name")
-        rating = (st.get("rating") or {}).get("value")
-        playlists.append({"name": meta.get("name"), "tier": tier, "rating": rating})
-    info["playlists"] = playlists
-    return info
+    body = await asyncio.to_thread(_fetch_via_zenrows_raw, target, False)
+    return json.loads(body)
+
+
+async def get_player_profile(platform: str, username: str) -> dict:
+    """
+    Returns the parsed player profile dict. When a ZenRows key is configured
+    (i.e. on the server) it uses ZenRows -> Tracker's JSON API, which reliably
+    gets past Cloudflare. Otherwise it falls back to the direct headful browser
+    scrape (works from a residential machine). Raises ScrapeBlockedError when no
+    usable data comes back, so callers can fall back to manual entry.
+    """
+    # Imported here to avoid any import-order coupling at module load.
+    from data_processor import parse_player_stats, build_profile_from_api
+
+    if ZENROWS_KEY:
+        try:
+            api_json = await fetch_profile_via_api(platform, username)
+        except Exception as e:
+            raise ScrapeBlockedError(f"Profile API fetch failed: {e}")
+        profile = build_profile_from_api(api_json)
+        if not profile.get("ranked_playlists"):
+            raise ScrapeBlockedError("No ranked playlists returned for this profile.")
+        return profile
+
+    html = await scrape_rocket_league_stats(platform, username)
+    return parse_player_stats(html)
 
 
 def _accept_api_html(html: str, source: str) -> str | None:

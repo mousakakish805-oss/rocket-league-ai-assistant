@@ -56,6 +56,55 @@ def build_manual_profile(playlists: dict) -> dict:
     }
 
 
+def build_profile_from_api(api_json: dict) -> dict:
+    """
+    Builds a profile (same shape as parse_player_stats) from Tracker's internal
+    JSON API response -- data.segments[] where each playlist segment carries its
+    tier (rank name + icon), current rating (MMR), and peak rating.
+    """
+    data = (api_json or {}).get("data") or {}
+    segments = data.get("segments") or []
+
+    ranked = {}
+    for seg in segments:
+        if seg.get("type") != "playlist":
+            continue
+        name = (seg.get("metadata") or {}).get("name")
+        if not name:
+            continue
+
+        stats = seg.get("stats") or {}
+        tier_meta = (stats.get("tier") or {}).get("metadata") or {}
+        rank = (tier_meta.get("name") or "Unranked").strip() or "Unranked"
+
+        # Skip casual / genuinely unranked modes -- the coach cares about ranks.
+        if rank.lower() == "unranked":
+            continue
+
+        try:
+            mmr = int((stats.get("rating") or {}).get("value") or 0)
+        except (TypeError, ValueError):
+            mmr = 0
+
+        entry = {"rank": rank, "mmr": mmr, "icon": tier_meta.get("iconUrl") or ""}
+
+        peak = (stats.get("peakRating") or {}).get("value")
+        if peak is not None:
+            try:
+                entry["peak_mmr"] = int(peak)
+            except (TypeError, ValueError):
+                pass
+
+        ranked[name] = entry
+
+    return {
+        "overview": {},
+        "ranked_playlists": ranked,
+        "identified_weaknesses": identify_weaknesses(ranked),
+        "source": "scraped",
+    }
+
+
 def parse_player_stats(html_content: str) -> dict:
     """
     Parses Rocket League Tracker HTML and extracts each playlist's current rank

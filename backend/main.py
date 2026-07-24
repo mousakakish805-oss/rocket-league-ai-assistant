@@ -7,8 +7,8 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from scraper import scrape_rocket_league_stats, ScrapeBlockedError, debug_scrape_zenrows
-from data_processor import parse_player_stats, build_manual_profile
+from scraper import get_player_profile, ScrapeBlockedError
+from data_processor import build_manual_profile
 from ai_coach import generate_coaching_response, generate_initial_analysis
 
 app = FastAPI(title="Rocket League AI Assistant API")
@@ -74,13 +74,6 @@ def read_root():
     return {"message": "Rocket League AI Assistant Backend active!"}
 
 
-@app.post("/api/v1/debug/scrape")
-@limiter.limit("10/minute")
-async def debug_scrape(request: Request, body: PlayerRequest):
-    """Temporary diagnostic: shows exactly what the ZenRows fetch returns."""
-    return await debug_scrape_zenrows(body.platform, body.username)
-
-
 @app.post("/api/v1/stats/scrape")
 @limiter.limit("10/minute")
 async def get_player_stats(request: Request, body: PlayerRequest):
@@ -108,8 +101,7 @@ async def coach_analyze(request: Request, body: PlayerRequest):
     frontend can fall back to asking the player to type their ranks in.
     """
     try:
-        raw_html = await scrape_rocket_league_stats(body.platform, body.username)
-        parsed_data = parse_player_stats(raw_html)
+        parsed_data = await get_player_profile(body.platform, body.username)
     except ScrapeBlockedError:
         return {
             "status": "manual_required",
@@ -194,8 +186,7 @@ async def coach_chat(request: Request, body: CoachChatRequest):
 
     if not _has_ranked_data(parsed_data):
         try:
-            raw_html = await scrape_rocket_league_stats(body.platform, body.username)
-            parsed_data = parse_player_stats(raw_html)
+            parsed_data = await get_player_profile(body.platform, body.username)
         except Exception:
             # Blocked / failed -- the coach handles an empty profile gracefully
             # (it won't invent ranks; it answers generally or asks for stats).
