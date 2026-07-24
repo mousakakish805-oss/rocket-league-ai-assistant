@@ -164,18 +164,17 @@ async def debug_scrape_zenrows(platform: str, username: str) -> dict:
         "mmr", "playlist", "tierName", "trackercdn.com/cdn/tracker.gg/rocket-league/ranks",
     ]
     lower = html.lower()
-    idx = lower.find("ranked duel")
-    if idx == -1:
-        idx = lower.find("ranked ")
-    if idx == -1:
-        idx = lower.find("mmr")
+    # Dump the JSON chunk that holds the playlist rank data ("segments" array).
+    seg_idx = html.find('"segments"')
+    tier_idx = html.find('"tier"')
     info.update(
         ok=True,
         length=len(html),
         title=(m.group(1).strip()[:120] if m else None),
         looks_like_challenge=any(mk in html[:4000].lower() for mk in BLOCK_TITLE_MARKERS),
         markers={mk: (mk.lower() in lower) for mk in markers},
-        rank_context=(html[max(0, idx - 120): idx + 500] if idx != -1 else None),
+        segments_dump=(html[seg_idx: seg_idx + 2600] if seg_idx != -1 else None),
+        tier_dump=(html[max(0, tier_idx - 200): tier_idx + 700] if tier_idx != -1 else None),
     )
     return info
 
