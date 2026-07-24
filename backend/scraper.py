@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import urllib.parse
 import urllib.request
@@ -141,41 +142,60 @@ async def _try_zenrows(target_url: str) -> str | None:
     return _accept_api_html(html, "ZenRows")
 
 
+TRACKER_API = "https://api.tracker.gg/api/v2/rocket-league/standard/profile/{platform}/{username}"
+
+
+def _fetch_via_zenrows_raw(target_url: str, render: bool) -> str:
+    """ZenRows GET of an arbitrary URL. render=False for JSON API endpoints."""
+    params = {
+        "apikey": ZENROWS_KEY,
+        "url": target_url,
+        "premium_proxy": "true",
+        "proxy_country": "us",
+    }
+    if render:
+        params["js_render"] = "true"
+    api_url = "https://api.zenrows.com/v1/?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(api_url, headers={"User-Agent": "rl-coach/1.0"})
+    with urllib.request.urlopen(req, timeout=90) as resp:
+        return resp.read().decode("utf-8", errors="replace")
+
+
 async def debug_scrape_zenrows(platform: str, username: str) -> dict:
-    """Diagnostic: run only the ZenRows fetch and report what came back, so we
-    can see WHY a scrape is failing without reading server logs. Temporary."""
-    import re
-    url = f"https://rocketleague.tracker.network/rocket-league/profile/{platform}/{username}/overview"
-    info = {"has_zenrows_key": bool(ZENROWS_KEY), "has_scraperapi_key": bool(SCRAPERAPI_KEY)}
+    """Diagnostic: fetch Tracker's internal JSON API via ZenRows and show the
+    parsed playlist ranks. Temporary."""
+    target = TRACKER_API.format(platform=platform, username=username)
+    info = {"target": target, "has_zenrows_key": bool(ZENROWS_KEY)}
     if not ZENROWS_KEY:
         info["note"] = "RL_ZENROWS_KEY not set"
         return info
     try:
-        html = await asyncio.to_thread(_fetch_via_zenrows, url)
+        body = await asyncio.to_thread(_fetch_via_zenrows_raw, target, False)
     except Exception as e:
         info["ok"] = False
         info["error"] = f"{type(e).__name__}: {e}"
         return info
-    m = re.search(r"<title[^>]*>(.*?)</title>", html, re.S | re.I)
-    markers = [
-        "ratings-grid", "text-accent", "rating__title", "Ranked Duel",
-        "Ranked Doubles", "Ranked Standard", "Tier ", "__NUXT__",
-        "__INITIAL_STATE__", "window.__", "data-vm-ssr", "segment",
-        "mmr", "playlist", "tierName", "trackercdn.com/cdn/tracker.gg/rocket-league/ranks",
-    ]
-    lower = html.lower()
-    # Dump the JSON chunk that holds the playlist rank data ("segments" array).
-    seg_idx = html.find('"segments"')
-    tier_idx = html.find('"tier"')
-    info.update(
-        ok=True,
-        length=len(html),
-        title=(m.group(1).strip()[:120] if m else None),
-        looks_like_challenge=any(mk in html[:4000].lower() for mk in BLOCK_TITLE_MARKERS),
-        markers={mk: (mk.lower() in lower) for mk in markers},
-        segments_dump=(html[seg_idx: seg_idx + 2600] if seg_idx != -1 else None),
-        tier_dump=(html[max(0, tier_idx - 200): tier_idx + 700] if tier_idx != -1 else None),
-    )
+    info["length"] = len(body)
+    info["head"] = body[:600]
+    try:
+        j = json.loads(body)
+    except Exception as e:
+        info["is_json"] = False
+        info["json_error"] = str(e)
+        return info
+    info["is_json"] = True
+    segs = (j.get("data") or {}).get("segments") or []
+    info["segment_count"] = len(segs)
+    playlists = []
+    for s in segs:
+        if s.get("type") != "playlist":
+            continue
+        meta = s.get("metadata") or {}
+        st = s.get("stats") or {}
+        tier = ((st.get("tier") or {}).get("metadata") or {}).get("name")
+        rating = (st.get("rating") or {}).get("value")
+        playlists.append({"name": meta.get("name"), "tier": tier, "rating": rating})
+    info["playlists"] = playlists
     return info
 
 
