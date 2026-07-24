@@ -7,7 +7,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from scraper import scrape_rocket_league_stats, ScrapeBlockedError
+from scraper import scrape_rocket_league_stats, ScrapeBlockedError, debug_scrape_zenrows
 from data_processor import parse_player_stats, build_manual_profile
 from ai_coach import generate_coaching_response, generate_initial_analysis
 
@@ -72,6 +72,13 @@ def _has_ranked_data(profile: dict) -> bool:
 @app.get("/")
 def read_root():
     return {"message": "Rocket League AI Assistant Backend active!"}
+
+
+@app.post("/api/v1/debug/scrape")
+@limiter.limit("10/minute")
+async def debug_scrape(request: Request, body: PlayerRequest):
+    """Temporary diagnostic: shows exactly what the ZenRows fetch returns."""
+    return await debug_scrape_zenrows(body.platform, body.username)
 
 
 @app.post("/api/v1/stats/scrape")

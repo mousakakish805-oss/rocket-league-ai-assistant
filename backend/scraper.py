@@ -141,6 +141,34 @@ async def _try_zenrows(target_url: str) -> str | None:
     return _accept_api_html(html, "ZenRows")
 
 
+async def debug_scrape_zenrows(platform: str, username: str) -> dict:
+    """Diagnostic: run only the ZenRows fetch and report what came back, so we
+    can see WHY a scrape is failing without reading server logs. Temporary."""
+    import re
+    url = f"https://rocketleague.tracker.network/rocket-league/profile/{platform}/{username}/overview"
+    info = {"has_zenrows_key": bool(ZENROWS_KEY), "has_scraperapi_key": bool(SCRAPERAPI_KEY)}
+    if not ZENROWS_KEY:
+        info["note"] = "RL_ZENROWS_KEY not set"
+        return info
+    try:
+        html = await asyncio.to_thread(_fetch_via_zenrows, url)
+    except Exception as e:
+        info["ok"] = False
+        info["error"] = f"{type(e).__name__}: {e}"
+        return info
+    m = re.search(r"<title[^>]*>(.*?)</title>", html, re.S | re.I)
+    info.update(
+        ok=True,
+        length=len(html),
+        title=(m.group(1).strip()[:120] if m else None),
+        has_ratings_grid="ratings-grid" in html,
+        has_text_accent="text-accent" in html,
+        looks_like_challenge=any(mk in html[:4000].lower() for mk in BLOCK_TITLE_MARKERS),
+        snippet=html[:200],
+    )
+    return info
+
+
 def _accept_api_html(html: str, source: str) -> str | None:
     """Accept scraping-API HTML only if it's the real profile, not a
     challenge/error page. Returns the HTML, or None to signal failure."""
