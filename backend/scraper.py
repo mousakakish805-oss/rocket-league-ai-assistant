@@ -118,6 +118,10 @@ def _fetch_via_zenrows(target_url: str) -> str:
         "js_render": "true",       # headless browser (clears CF JS challenge)
         "premium_proxy": "true",   # residential IPs (gets past IP blocks)
         "proxy_country": "us",
+        # Tracker is a Vue SPA: the page shell loads first, then the ranks render
+        # a moment later. Without this, ZenRows returns the shell before the ranks
+        # appear. Wait for the rank grid element so the data is actually present.
+        "wait_for": ".ratings-grid",
     }
     api_url = "https://api.zenrows.com/v1/?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(api_url, headers={"User-Agent": "rl-coach/1.0"})
