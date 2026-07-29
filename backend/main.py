@@ -7,7 +7,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from scraper import get_player_profile, ScrapeBlockedError, debug_explore
+from scraper import get_player_profile, ScrapeBlockedError
 from data_processor import build_manual_profile
 from ai_coach import generate_coaching_response, generate_initial_analysis
 
@@ -55,14 +55,16 @@ class ManualProfileRequest(BaseModel):
     playlists: dict[str, ManualPlaylist]
 
 
-class CoachChatRequest(BaseModel):
+class CoachRequest(BaseModel):
     platform: str
     username: str
-    query: str
-    # The already-established profile (from a successful scrape or manual
-    # entry). Sent by the frontend so we DON'T re-scrape on every message --
-    # that was both wasteful and a fast way to get Cloudflare-blocked.
+    # The profile the frontend already established (looked up or entered), so
+    # the coach doesn't trigger another lookup.
     profile: dict | None = None
+
+
+class CoachChatRequest(CoachRequest):
+    query: str
 
 
 def _has_ranked_data(profile: dict) -> bool:
@@ -74,92 +76,59 @@ def read_root():
     return {"message": "Rocket League AI Assistant Backend active!"}
 
 
-@app.post("/api/v1/debug/explore")
-@limiter.limit("10/minute")
-async def debug_explore_endpoint(request: Request, body: PlayerRequest):
-    """Temporary: inspect lifetime stats + matches shape."""
-    return await debug_explore(body.platform, body.username)
+# ---------------------------------------------------------------- lookup ----
 
-
-@app.post("/api/v1/stats/scrape")
-@limiter.limit("10/minute")
-async def get_player_stats(request: Request, body: PlayerRequest):
-    try:
-        raw_html = await scrape_rocket_league_stats(body.platform, body.username)
-        parsed_data = parse_player_stats(raw_html)
-
-        return {
-            "status": "success",
-            "platform": body.platform,
-            "username": body.username,
-            "data": parsed_data,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/v1/coach/analyze")
-@limiter.limit("10/minute")
-async def coach_analyze(request: Request, body: PlayerRequest):
+@app.post("/api/v1/profile")
+@limiter.limit("15/minute")
+async def lookup_profile(request: Request, body: PlayerRequest):
     """
-    Tries to auto-load the player's profile by scraping Tracker Network. If the
-    scrape is blocked (Cloudflare) or comes back empty, this returns a
-    `status: "manual_required"` signal (HTTP 200) instead of an error, so the
-    frontend can fall back to asking the player to type their ranks in.
+    Step 1 of the flow: look up a player's stats (ranks + lifetime totals).
+    Costs no AI credits -- the coach is only invoked later, on demand.
+
+    Always returns HTTP 200. `status` is "success" when stats were found, or
+    "not_found" when the profile couldn't be loaded, so the frontend can offer
+    "search again" / "enter manually".
     """
     try:
-        parsed_data = await get_player_profile(body.platform, body.username)
-    except ScrapeBlockedError:
+        profile = await get_player_profile(body.platform, body.username)
+    except ScrapeBlockedError as e:
         return {
-            "status": "manual_required",
+            "status": "not_found",
             "reason": "blocked",
-            "message": (
-                "The tracker site blocked the automatic lookup (bot protection). "
-                "Enter your ranks manually to get coaching."
-            ),
+            "message": str(e),
             "platform": body.platform,
             "username": body.username,
         }
     except Exception as e:
         return {
-            "status": "manual_required",
+            "status": "not_found",
             "reason": "error",
-            "message": f"Couldn't auto-load stats ({e}). Enter your ranks manually to continue.",
+            "message": f"Couldn't load that profile ({e}).",
             "platform": body.platform,
             "username": body.username,
         }
 
-    if not _has_ranked_data(parsed_data):
+    if not _has_ranked_data(profile):
         return {
-            "status": "manual_required",
+            "status": "not_found",
             "reason": "empty",
-            "message": (
-                "Auto-load didn't find any ranked playlists for that profile. "
-                "Enter your ranks manually to get coaching."
-            ),
+            "message": "No ranked playlists found for that profile.",
             "platform": body.platform,
             "username": body.username,
         }
-
-    reply = generate_initial_analysis(parsed_data)
 
     return {
         "status": "success",
-        "source": "scraped",
         "platform": body.platform,
         "username": body.username,
-        "data": parsed_data,
-        "reply": reply,
+        "data": profile,
     }
 
 
-@app.post("/api/v1/coach/analyze_manual")
-@limiter.limit("20/minute")
-async def coach_analyze_manual(request: Request, body: ManualProfileRequest):
-    """
-    Builds a profile from ranks the player typed in themselves (the reliable
-    fallback when scraping is blocked) and returns the same opening analysis.
-    """
+@app.post("/api/v1/profile/manual")
+@limiter.limit("30/minute")
+async def manual_profile(request: Request, body: ManualProfileRequest):
+    """Step 1 (fallback): build a profile from ranks the player typed in."""
     playlists = {name: {"rank": p.rank, "mmr": p.mmr} for name, p in body.playlists.items()}
     profile = build_manual_profile(playlists)
 
@@ -169,42 +138,58 @@ async def coach_analyze_manual(request: Request, body: ManualProfileRequest):
             detail="No ranks entered. Fill in at least one playlist's rank or MMR.",
         )
 
-    reply = generate_initial_analysis(profile)
-
     return {
         "status": "success",
-        "source": "manual",
         "platform": body.platform,
         "username": body.username,
         "data": profile,
-        "reply": reply,
+    }
+
+
+# ----------------------------------------------------------------- coach ----
+
+@app.post("/api/v1/coach/analyze")
+@limiter.limit("15/minute")
+async def coach_analyze(request: Request, body: CoachRequest):
+    """
+    Step 2: the player clicked "activate coach". Uses the profile the frontend
+    already has; only looks it up again if one wasn't supplied.
+    """
+    profile = body.profile or {}
+
+    if not _has_ranked_data(profile):
+        try:
+            profile = await get_player_profile(body.platform, body.username)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"No profile available ({e}).")
+
+    return {
+        "status": "success",
+        "platform": body.platform,
+        "username": body.username,
+        "data": profile,
+        "reply": generate_initial_analysis(profile),
     }
 
 
 @app.post("/api/v1/coach/chat")
 @limiter.limit("20/minute")
 async def coach_chat(request: Request, body: CoachChatRequest):
-    """
-    Answers the player's question grounded in their profile. Prefers the profile
-    the frontend already established (scraped once, or manually entered); only
-    falls back to a best-effort scrape if none was provided.
-    """
-    parsed_data = body.profile or {}
+    """Step 3: answer a follow-up question grounded in the player's profile."""
+    profile = body.profile or {}
 
-    if not _has_ranked_data(parsed_data):
+    if not _has_ranked_data(profile):
         try:
-            parsed_data = await get_player_profile(body.platform, body.username)
+            profile = await get_player_profile(body.platform, body.username)
         except Exception:
-            # Blocked / failed -- the coach handles an empty profile gracefully
-            # (it won't invent ranks; it answers generally or asks for stats).
-            parsed_data = parsed_data or {}
-
-    reply = generate_coaching_response(parsed_data, body.query)
+            # The coach handles an empty profile gracefully -- it won't invent
+            # ranks; it answers generally or asks for stats.
+            profile = profile or {}
 
     return {
         "status": "success",
         "platform": body.platform,
         "username": body.username,
-        "profile": parsed_data,
-        "reply": reply,
+        "profile": profile,
+        "reply": generate_coaching_response(profile, body.query),
     }

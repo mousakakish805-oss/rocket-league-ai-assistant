@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<meta name="description" content="AI coaching chat that grounds Rocket League advice in your real Tracker Network stats." />
+<meta name="description" content="AI coaching that grounds Rocket League advice in your real Tracker Network stats." />
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2300F0FF'/%3E%3Cstop offset='1' stop-color='%23FF2FD0'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='4' y='4' width='24' height='24' rx='5' fill='%2305060A'/%3E%3Crect x='10' y='10' width='12' height='12' rx='3' fill='url(%23g)'/%3E%3C/svg%3E" />
 <title>Rocket League AI Coach</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -22,84 +22,126 @@
     <p class="topbar-sub">Tactical feedback, grounded in your actual stats.</p>
   </header>
 
-  <main class="layout">
+  <!-- ============ STEP 1: player lookup ============ -->
+  <section id="view-lookup" class="view panel panel--centered" aria-label="Find player">
+    <h2 class="view-title">Find your profile</h2>
+    <p class="view-sub">Enter your platform and username to pull your live Rocket League stats.</p>
 
-    <!-- Player lookup + boost-meter rank display -->
-    <section class="panel lookup-panel" aria-label="Player lookup">
-      <h2 class="panel-title">Player</h2>
+    <form id="lookup-form" class="lookup-form">
+      <label class="field">
+        <span class="field-label">Platform</span>
+        <select id="platform" name="platform">
+          <option value="epic">Epic</option>
+          <option value="steam">Steam</option>
+          <option value="psn">PlayStation</option>
+          <option value="xbl">Xbox</option>
+        </select>
+      </label>
 
-      <form id="lookup-form" class="lookup-form">
-        <label class="field">
-          <span class="field-label">Platform</span>
-          <select id="platform" name="platform">
-            <option value="epic">Epic</option>
-            <option value="steam">Steam</option>
-            <option value="psn">PlayStation</option>
-            <option value="xbl">Xbox</option>
-          </select>
-        </label>
+      <label class="field">
+        <span class="field-label">Username</span>
+        <input id="username" name="username" type="text" placeholder="e.g. diablo-GG28" autocomplete="off" required />
+      </label>
 
-        <label class="field">
-          <span class="field-label">Username</span>
-          <input id="username" name="username" type="text" placeholder="e.g. Squishy" autocomplete="off" required />
-        </label>
+      <button type="submit" class="btn-primary btn-lg" id="lookup-btn">Continue</button>
+    </form>
 
-        <button type="submit" class="btn-primary" id="lookup-btn">Load profile</button>
-      </form>
+    <p id="lookup-hint" class="view-hint">First lookup can take up to a minute while the server wakes up.</p>
+  </section>
 
-      <button type="button" id="manual-toggle" class="link-btn">Enter ranks manually instead</button>
+  <!-- ============ STEP 1b: not found ============ -->
+  <section id="view-notfound" class="view panel panel--centered" aria-label="Profile not found" hidden>
+    <h2 class="view-title">We couldn't load that profile</h2>
+    <p id="notfound-message" class="view-sub"></p>
 
-      <div id="profile-status" class="profile-status" hidden></div>
+    <div class="choice-row">
+      <button type="button" class="btn-primary" id="retry-btn">Search again</button>
+      <button type="button" class="btn-ghost" id="manual-btn">Enter my ranks manually</button>
+    </div>
+  </section>
 
-      <!-- Manual stat entry: reliable fallback when the tracker auto-lookup
-           is blocked, and always available via the toggle above. -->
-      <form id="manual-form" class="manual-form" hidden>
-        <h3 class="meters-title">Enter your ranks</h3>
-        <p class="manual-hint">Type your current rank and MMR for the modes you play — you can read them in-game or on the tracker site. Leave a row blank to skip it.</p>
+  <!-- ============ STEP 1c: manual entry ============ -->
+  <section id="view-manual" class="view panel panel--centered" aria-label="Manual rank entry" hidden>
+    <h2 class="view-title">Enter your ranks</h2>
+    <p class="view-sub">Type the rank and MMR for the modes you play. Leave a row blank to skip it.</p>
 
-        <div class="manual-row">
-          <span class="manual-playlist">1v1</span>
-          <input class="manual-rank" data-playlist="Ranked Duel 1v1" type="text" placeholder="Rank e.g. Diamond II" autocomplete="off" />
-          <input class="manual-mmr" data-playlist="Ranked Duel 1v1" type="number" placeholder="MMR" min="0" inputmode="numeric" />
-        </div>
-        <div class="manual-row">
-          <span class="manual-playlist">2v2</span>
-          <input class="manual-rank" data-playlist="Ranked Doubles 2v2" type="text" placeholder="Rank e.g. Champion I" autocomplete="off" />
-          <input class="manual-mmr" data-playlist="Ranked Doubles 2v2" type="number" placeholder="MMR" min="0" inputmode="numeric" />
-        </div>
-        <div class="manual-row">
-          <span class="manual-playlist">3v3</span>
-          <input class="manual-rank" data-playlist="Ranked Standard 3v3" type="text" placeholder="Rank e.g. Champion I" autocomplete="off" />
-          <input class="manual-mmr" data-playlist="Ranked Standard 3v3" type="number" placeholder="MMR" min="0" inputmode="numeric" />
-        </div>
+    <form id="manual-form" class="manual-form">
+      <div class="manual-head">
+        <span></span><span>Rank</span><span>MMR</span>
+      </div>
+      <div class="manual-row">
+        <span class="manual-playlist">1v1</span>
+        <input class="manual-rank" data-playlist="Ranked Duel 1v1" type="text" placeholder="e.g. Gold II" autocomplete="off" />
+        <input class="manual-mmr" data-playlist="Ranked Duel 1v1" type="number" placeholder="534" min="0" inputmode="numeric" />
+      </div>
+      <div class="manual-row">
+        <span class="manual-playlist">2v2</span>
+        <input class="manual-rank" data-playlist="Ranked Doubles 2v2" type="text" placeholder="e.g. Platinum II" autocomplete="off" />
+        <input class="manual-mmr" data-playlist="Ranked Doubles 2v2" type="number" placeholder="719" min="0" inputmode="numeric" />
+      </div>
+      <div class="manual-row">
+        <span class="manual-playlist">3v3</span>
+        <input class="manual-rank" data-playlist="Ranked Standard 3v3" type="text" placeholder="e.g. Platinum I" autocomplete="off" />
+        <input class="manual-mmr" data-playlist="Ranked Standard 3v3" type="number" placeholder="699" min="0" inputmode="numeric" />
+      </div>
 
-        <button type="submit" class="btn-primary" id="manual-submit">Start coaching</button>
-      </form>
+      <div class="choice-row">
+        <button type="submit" class="btn-primary" id="manual-submit">Show my stats</button>
+        <button type="button" class="btn-ghost" id="manual-back">Back</button>
+      </div>
+    </form>
+  </section>
 
-      <div id="rank-meters" class="rank-meters" hidden>
-        <h3 class="meters-title">Ranked playlists</h3>
+  <!-- ============ STEP 2: stats dashboard ============ -->
+  <section id="view-stats" class="view" aria-label="Your stats" hidden>
+    <div class="stats-head">
+      <div>
+        <h2 class="view-title" id="stats-name">Player</h2>
+        <p class="view-sub" id="stats-meta"></p>
+      </div>
+      <button type="button" class="btn-ghost btn-sm" id="new-search">New search</button>
+    </div>
+
+    <div class="stats-grid">
+      <section class="panel" aria-label="Ranked playlists">
+        <h3 class="panel-title">Ranked playlists</h3>
         <div id="meters-list" class="meters-list"></div>
+      </section>
+
+      <section class="panel" aria-label="Lifetime stats">
+        <h3 class="panel-title">Lifetime</h3>
+        <div id="lifetime-grid" class="lifetime-grid"></div>
+        <p id="lifetime-empty" class="view-hint" hidden>Lifetime totals aren't available for this profile.</p>
+      </section>
+    </div>
+
+    <div id="weakness-note" class="weakness-note" hidden></div>
+
+    <div class="cta-row">
+      <button type="button" class="btn-primary btn-lg" id="activate-coach">Activate AI coach</button>
+      <span class="cta-hint">Get a breakdown of these numbers, then ask anything.</span>
+    </div>
+  </section>
+
+  <!-- ============ STEP 3: coach chat ============ -->
+  <section id="view-chat" class="view" aria-label="Coach chat" hidden>
+    <div class="stats-head">
+      <div>
+        <h2 class="view-title">Your coach</h2>
+        <p class="view-sub" id="chat-meta"></p>
       </div>
+      <button type="button" class="btn-ghost btn-sm" id="back-to-stats">Back to stats</button>
+    </div>
 
-      <div id="weakness-note" class="weakness-note" hidden></div>
-    </section>
-
-    <!-- Chat thread -->
-    <section class="panel chat-panel" aria-label="Coach chat">
-      <div id="chat-thread" class="chat-thread">
-        <div class="chat-msg chat-msg--coach">
-          <span class="msg-role">COACH</span>
-          <p>Load a profile on the left and I'll break down tips for every ranked mode you play. After that, ask me anything — kickoffs, rotation, aerial mechanics, whatever's holding your rank back.</p>
-        </div>
-      </div>
-
+    <section class="panel chat-panel">
+      <div id="chat-thread" class="chat-thread"></div>
       <form id="chat-form" class="chat-form">
         <input id="chat-input" type="text" placeholder="Ask your coach…" autocomplete="off" disabled />
         <button type="submit" class="btn-primary" id="chat-send" disabled>Send</button>
       </form>
     </section>
+  </section>
 
-  </main>
 </div>
 
 <script src="config.js"></script>

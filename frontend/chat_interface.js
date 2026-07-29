@@ -1,124 +1,113 @@
-// Rocket League AI Coach — frontend logic
-// Talks to the FastAPI backend (main.py): /api/v1/coach/chat
+// Rocket League AI Coach -- frontend logic
+// Flow: lookup -> (not found -> retry / manual) -> stats dashboard -> coach chat
+// Talks to the FastAPI backend: /api/v1/profile, /profile/manual,
+// /coach/analyze, /coach/chat
 
 const API_BASE = window.RL_COACH_API_BASE || "http://localhost:8000";
 
 // Roughly SSL-ceiling MMR, used only to size the boost-meter fill bars.
 const METER_MAX_MMR = 2000;
 
+const PLATFORM_LABELS = {
+  epic: "Epic",
+  steam: "Steam",
+  psn: "PlayStation",
+  xbl: "Xbox",
+};
+
 const els = {
+  views: {
+    lookup: document.getElementById("view-lookup"),
+    notfound: document.getElementById("view-notfound"),
+    manual: document.getElementById("view-manual"),
+    stats: document.getElementById("view-stats"),
+    chat: document.getElementById("view-chat"),
+  },
+
   lookupForm: document.getElementById("lookup-form"),
   platform: document.getElementById("platform"),
   username: document.getElementById("username"),
   lookupBtn: document.getElementById("lookup-btn"),
-  profileStatus: document.getElementById("profile-status"),
-  rankMeters: document.getElementById("rank-meters"),
-  metersList: document.getElementById("meters-list"),
-  weaknessNote: document.getElementById("weakness-note"),
+  lookupHint: document.getElementById("lookup-hint"),
 
-  manualToggle: document.getElementById("manual-toggle"),
+  notfoundMessage: document.getElementById("notfound-message"),
+  retryBtn: document.getElementById("retry-btn"),
+  manualBtn: document.getElementById("manual-btn"),
+
   manualForm: document.getElementById("manual-form"),
   manualSubmit: document.getElementById("manual-submit"),
+  manualBack: document.getElementById("manual-back"),
 
+  statsName: document.getElementById("stats-name"),
+  statsMeta: document.getElementById("stats-meta"),
+  metersList: document.getElementById("meters-list"),
+  lifetimeGrid: document.getElementById("lifetime-grid"),
+  lifetimeEmpty: document.getElementById("lifetime-empty"),
+  weaknessNote: document.getElementById("weakness-note"),
+  activateCoach: document.getElementById("activate-coach"),
+  newSearch: document.getElementById("new-search"),
+
+  chatMeta: document.getElementById("chat-meta"),
+  backToStats: document.getElementById("back-to-stats"),
   chatThread: document.getElementById("chat-thread"),
   chatForm: document.getElementById("chat-form"),
   chatInput: document.getElementById("chat-input"),
   chatSend: document.getElementById("chat-send"),
 };
 
-let currentPlayer = null; // { platform, username }
-let currentProfile = null; // established profile dict (scraped or manual)
+let currentPlayer = null;  // { platform, username }
+let currentProfile = null; // the established profile dict
+let coachStarted = false;  // opening analysis already requested?
+
+// ---------- View switching ----------
+
+function showView(name) {
+  Object.entries(els.views).forEach(([key, el]) => {
+    el.hidden = key !== name;
+  });
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
 
 // ---------- Helpers ----------
 
-function setStatus(message, isError = false) {
-  els.profileStatus.textContent = message;
-  els.profileStatus.hidden = !message;
-  els.profileStatus.classList.toggle("is-error", isError);
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str == null ? "" : str;
+  return div.innerHTML;
 }
 
-function setLookupBusy(busy) {
-  els.lookupBtn.disabled = busy;
-  els.lookupBtn.textContent = busy ? "Loading…" : "Load profile";
-  els.platform.disabled = busy;
-  els.username.disabled = busy;
+function escapeAttr(str) {
+  return String(str == null ? "" : str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
-function setChatEnabled(enabled) {
-  els.chatInput.disabled = !enabled;
-  els.chatSend.disabled = !enabled;
-}
-
-function showManualForm(show) {
-  els.manualForm.hidden = !show;
-  els.manualToggle.textContent = show
-    ? "Hide manual entry"
-    : "Enter ranks manually instead";
-}
-
-// Shared success path for both the auto-scrape and manual-entry flows: render
-// the stat panel, post the coach's opening analysis, remember the profile so
-// chat messages don't need to re-fetch it, and unlock the chat box.
-function applyProfile(payload) {
-  const data = payload.data || {};
-  renderMeters(data.ranked_playlists);
-  renderWeaknesses(data.identified_weaknesses);
-
-  appendMessage("coach", payload.reply || "Profile loaded -- ask me anything.");
-
-  currentPlayer = { platform: payload.platform, username: payload.username };
-  currentProfile = data;
-  setChatEnabled(true);
-  els.chatInput.focus();
-}
-
-function appendMessage(role, text, { pending = false } = {}) {
-  const wrap = document.createElement("div");
-  wrap.className = `chat-msg chat-msg--${role}${pending ? " chat-msg--pending" : ""}`;
-
-  const roleLabel = document.createElement("span");
-  roleLabel.className = "msg-role";
-  roleLabel.textContent = role === "coach" ? "COACH" : "YOU";
-  wrap.appendChild(roleLabel);
-
-  if (pending) {
-    const p = document.createElement("p");
-    p.innerHTML = '<span class="typing-dots"><span></span><span></span><span></span></span>';
-    wrap.appendChild(p);
-  } else {
-    const p = document.createElement("p");
-    p.textContent = text;
-    wrap.appendChild(p);
-  }
-
-  els.chatThread.appendChild(wrap);
-  els.chatThread.scrollTop = els.chatThread.scrollHeight;
-  return wrap;
-}
-
-// Short playlist label: "Ranked Doubles 2v2" -> "2v2".
+// "Ranked Doubles 2v2" -> "2v2"
 function playlistShort(name) {
   const m = String(name).match(/\d\s*v\s*\d/i);
   if (m) return m[0].replace(/\s/g, "").toLowerCase();
   return String(name).replace(/^Ranked\s+/i, "");
 }
 
-// Fallback badge for manually-entered ranks (no icon from the tracker):
-// the rank's first letter, or a dash when unranked.
+// Fallback badge glyph when no rank icon is available (manual entry).
 function rankGlyph(rank) {
   const r = (rank || "").trim();
   if (!r || r.toLowerCase() === "unranked") return "–";
   return r.charAt(0).toUpperCase();
 }
 
+function platformLabel(slug) {
+  return PLATFORM_LABELS[slug] || slug;
+}
+
+// ---------- Rendering: stats dashboard ----------
+
 function renderMeters(rankedPlaylists) {
   els.metersList.innerHTML = "";
   const entries = Object.entries(rankedPlaylists || {});
-
-  if (entries.length === 0) {
-    els.rankMeters.hidden = true;
-    return;
-  }
 
   entries.forEach(([playlistName, info]) => {
     const mmr = Number(info.mmr) || 0;
@@ -153,13 +142,32 @@ function renderMeters(rankedPlaylists) {
     `;
     els.metersList.appendChild(card);
 
-    // Animate fill in on next frame (gives the boost-charge transition).
+    // Animate the fill on the next frame (boost-charge transition).
     requestAnimationFrame(() => {
       card.querySelector(".meter-fill").style.width = pct + "%";
     });
   });
+}
 
-  els.rankMeters.hidden = false;
+function renderLifetime(overview) {
+  els.lifetimeGrid.innerHTML = "";
+  const entries = Object.entries(overview || {});
+
+  if (entries.length === 0) {
+    els.lifetimeEmpty.hidden = false;
+    return;
+  }
+  els.lifetimeEmpty.hidden = true;
+
+  entries.forEach(([label, value]) => {
+    const tile = document.createElement("div");
+    tile.className = "stat-tile";
+    tile.innerHTML = `
+      <span class="stat-value">${escapeHtml(value)}</span>
+      <span class="stat-label">${escapeHtml(label)}</span>
+    `;
+    els.lifetimeGrid.appendChild(tile);
+  });
 }
 
 function renderWeaknesses(weaknesses) {
@@ -171,36 +179,40 @@ function renderWeaknesses(weaknesses) {
   els.weaknessNote.hidden = false;
 }
 
-function escapeHtml(str) {
-  const div = document.createElement("div");
-  div.textContent = str;
-  return div.innerHTML;
+function showStats(profile, player) {
+  currentProfile = profile;
+  currentPlayer = player;
+  coachStarted = false;
+
+  els.statsName.textContent = player.username;
+  const count = Object.keys(profile.ranked_playlists || {}).length;
+  const sourceLabel = profile.source === "manual" ? "entered manually" : "from Tracker";
+  els.statsMeta.textContent = `${platformLabel(player.platform)} · ${count} ranked playlist${count === 1 ? "" : "s"} · ${sourceLabel}`;
+  els.chatMeta.textContent = `${player.username} · ${platformLabel(player.platform)}`;
+
+  renderMeters(profile.ranked_playlists);
+  renderLifetime(profile.overview);
+  renderWeaknesses(profile.identified_weaknesses);
+
+  showView("stats");
 }
 
-// Attribute-safe escaping (also handles quotes) for values dropped into
-// src="" / alt="" via innerHTML.
-function escapeAttr(str) {
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+// ---------- Step 1: lookup ----------
+
+function setLookupBusy(busy) {
+  els.lookupBtn.disabled = busy;
+  els.lookupBtn.textContent = busy ? "Looking up…" : "Continue";
+  els.platform.disabled = busy;
+  els.username.disabled = busy;
+  els.lookupHint.textContent = busy
+    ? "Fetching live stats… this can take up to a minute."
+    : "First lookup can take up to a minute while the server wakes up.";
 }
 
-// ---------- Profile lookup ----------
-
-async function loadProfile(platform, username) {
+async function lookupProfile(platform, username) {
   setLookupBusy(true);
-  setStatus(`Looking up ${username} on ${platform}…`);
-  els.rankMeters.hidden = true;
-  els.weaknessNote.hidden = true;
-  showManualForm(false);
-
-  const pendingMsg = appendMessage("coach", "", { pending: true });
-
   try {
-    const res = await fetch(`${API_BASE}/api/v1/coach/analyze`, {
+    const res = await fetch(`${API_BASE}/api/v1/profile`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ platform, username }),
@@ -212,26 +224,19 @@ async function loadProfile(platform, username) {
     }
 
     const payload = await res.json();
-    pendingMsg.remove();
 
-    // Auto-lookup was blocked or empty -- fall back to manual entry.
-    if (payload.status === "manual_required") {
-      setStatus(payload.message || "Auto-lookup unavailable. Enter your ranks below.", true);
-      // Pre-fill the platform/username context for the manual submit.
-      currentPlayer = { platform, username };
-      showManualForm(true);
-      els.manualForm.querySelector(".manual-rank")?.focus();
+    if (payload.status !== "success") {
+      els.notfoundMessage.textContent =
+        payload.message || "That profile couldn't be loaded.";
+      showView("notfound");
       return;
     }
 
-    applyProfile(payload);
-    setStatus(`Loaded ${username} (${platform}). Ask away.`);
+    showStats(payload.data || {}, { platform, username });
   } catch (err) {
-    pendingMsg.remove();
-    setStatus(err.message || "Couldn't load that profile.", true);
-    currentPlayer = null;
-    currentProfile = null;
-    setChatEnabled(false);
+    els.notfoundMessage.textContent =
+      err.message || "Couldn't reach the server. Check your connection and try again.";
+    showView("notfound");
   } finally {
     setLookupBusy(false);
   }
@@ -242,17 +247,25 @@ els.lookupForm.addEventListener("submit", (e) => {
   const platform = els.platform.value;
   const username = els.username.value.trim();
   if (!username) return;
-  loadProfile(platform, username);
+  lookupProfile(platform, username);
 });
 
-// ---------- Manual entry ----------
+// ---------- Step 1b: not found ----------
 
-els.manualToggle.addEventListener("click", () => {
-  showManualForm(els.manualForm.hidden);
-  if (!els.manualForm.hidden) {
-    els.manualForm.querySelector(".manual-rank")?.focus();
-  }
+els.retryBtn.addEventListener("click", () => {
+  showView("lookup");
+  els.username.focus();
+  els.username.select();
 });
+
+els.manualBtn.addEventListener("click", () => {
+  showView("manual");
+  els.manualForm.querySelector(".manual-rank")?.focus();
+});
+
+els.manualBack.addEventListener("click", () => showView("notfound"));
+
+// ---------- Step 1c: manual entry ----------
 
 function collectManualPlaylists() {
   const playlists = {};
@@ -261,30 +274,30 @@ function collectManualPlaylists() {
     const mmrEl = els.manualForm.querySelector(`.manual-mmr[data-playlist="${name}"]`);
     const rank = rankEl.value.trim();
     const mmr = parseInt(mmrEl?.value, 10);
-    if (!rank && !mmr) return; // player left this row blank
+    if (!rank && !mmr) return; // row left blank
     playlists[name] = { rank: rank || "Unranked", mmr: Number.isFinite(mmr) ? mmr : 0 };
   });
   return playlists;
 }
 
-async function submitManual() {
+els.manualForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+
   const platform = els.platform.value;
-  const username = els.username.value.trim() || (currentPlayer && currentPlayer.username) || "player";
+  const username = els.username.value.trim() || "Player";
   const playlists = collectManualPlaylists();
 
   if (Object.keys(playlists).length === 0) {
-    setStatus("Enter at least one playlist's rank or MMR.", true);
+    els.notfoundMessage.textContent = "Enter at least one playlist's rank or MMR.";
+    showView("notfound");
     return;
   }
 
   els.manualSubmit.disabled = true;
   els.manualSubmit.textContent = "Working…";
-  setStatus("Analyzing your ranks…");
-
-  const pendingMsg = appendMessage("coach", "", { pending: true });
 
   try {
-    const res = await fetch(`${API_BASE}/api/v1/coach/analyze_manual`, {
+    const res = await fetch(`${API_BASE}/api/v1/profile/manual`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ platform, username, playlists }),
@@ -292,36 +305,104 @@ async function submitManual() {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || `Analysis failed (${res.status})`);
+      throw new Error(err.detail || `Couldn't use those ranks (${res.status})`);
     }
 
     const payload = await res.json();
-    pendingMsg.remove();
-    applyProfile(payload);
-    showManualForm(false);
-    setStatus(`Coaching ${username} from your entered ranks. Ask away.`);
+    showStats(payload.data || {}, { platform, username });
   } catch (err) {
-    pendingMsg.remove();
-    setStatus(err.message || "Couldn't analyze those ranks.", true);
+    els.notfoundMessage.textContent = err.message || "Couldn't use those ranks.";
+    showView("notfound");
   } finally {
     els.manualSubmit.disabled = false;
-    els.manualSubmit.textContent = "Start coaching";
+    els.manualSubmit.textContent = "Show my stats";
   }
-}
-
-els.manualForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  submitManual();
 });
 
-// ---------- Chat ----------
+// ---------- Step 2 -> 3: activate coach ----------
+
+els.newSearch.addEventListener("click", () => {
+  showView("lookup");
+  els.username.focus();
+  els.username.select();
+});
+
+els.backToStats.addEventListener("click", () => showView("stats"));
+
+function appendMessage(role, text, { pending = false } = {}) {
+  const wrap = document.createElement("div");
+  wrap.className = `chat-msg chat-msg--${role}${pending ? " chat-msg--pending" : ""}`;
+
+  const roleLabel = document.createElement("span");
+  roleLabel.className = "msg-role";
+  roleLabel.textContent = role === "coach" ? "COACH" : "YOU";
+  wrap.appendChild(roleLabel);
+
+  const p = document.createElement("p");
+  if (pending) {
+    p.innerHTML = '<span class="typing-dots"><span></span><span></span><span></span></span>';
+  } else {
+    p.textContent = text;
+  }
+  wrap.appendChild(p);
+
+  els.chatThread.appendChild(wrap);
+  els.chatThread.scrollTop = els.chatThread.scrollHeight;
+  return wrap;
+}
+
+function setChatEnabled(enabled) {
+  els.chatInput.disabled = !enabled;
+  els.chatSend.disabled = !enabled;
+}
+
+els.activateCoach.addEventListener("click", async () => {
+  showView("chat");
+
+  if (coachStarted) {
+    els.chatInput.focus();
+    return;
+  }
+  coachStarted = true;
+
+  els.chatThread.innerHTML = "";
+  setChatEnabled(false);
+  const pending = appendMessage("coach", "", { pending: true });
+
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/coach/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        platform: currentPlayer.platform,
+        username: currentPlayer.username,
+        profile: currentProfile,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `Coach failed to start (${res.status})`);
+    }
+
+    const payload = await res.json();
+    pending.remove();
+    appendMessage("coach", payload.reply || "Ask me anything about your game.");
+  } catch (err) {
+    pending.remove();
+    appendMessage("coach", `Couldn't reach the coach: ${err.message}`);
+    coachStarted = false; // let them retry
+  } finally {
+    setChatEnabled(true);
+    els.chatInput.focus();
+  }
+});
+
+// ---------- Step 3: chat ----------
 
 async function sendMessage(query) {
-  if (!currentPlayer) return;
-
   appendMessage("player", query);
-  const pendingMsg = appendMessage("coach", "", { pending: true });
-
+  const pending = appendMessage("coach", "", { pending: true });
   setChatEnabled(false);
 
   try {
@@ -332,7 +413,7 @@ async function sendMessage(query) {
         platform: currentPlayer.platform,
         username: currentPlayer.username,
         query,
-        profile: currentProfile, // reuse established stats; don't re-scrape
+        profile: currentProfile,
       }),
     });
 
@@ -342,17 +423,10 @@ async function sendMessage(query) {
     }
 
     const payload = await res.json();
-    pendingMsg.remove();
+    pending.remove();
     appendMessage("coach", payload.reply || "No response from coach.");
-
-    // Keep the established profile / panel in sync with what the coach used.
-    if (payload.profile && payload.profile.ranked_playlists) {
-      currentProfile = payload.profile;
-      renderMeters(payload.profile.ranked_playlists);
-      renderWeaknesses(payload.profile.identified_weaknesses);
-    }
   } catch (err) {
-    pendingMsg.remove();
+    pending.remove();
     appendMessage("coach", `Couldn't reach the coach: ${err.message}`);
   } finally {
     setChatEnabled(true);
