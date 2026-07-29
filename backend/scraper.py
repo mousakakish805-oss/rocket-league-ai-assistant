@@ -172,6 +172,31 @@ def _fetch_via_zenrows_raw(target_url: str, render: bool) -> str:
         raise RuntimeError(f"ZenRows HTTP {e.code}: {body}")
 
 
+def _fetch_via_zenrows_wait(target_url: str, wait_ms: str) -> str:
+    """ZenRows GET of a PAGE with JS rendering plus a post-load wait, for SPA
+    content (like the matches list) that renders after the shell loads."""
+    params = {
+        "apikey": ZENROWS_KEY,
+        "url": target_url,
+        "js_render": "true",
+        "premium_proxy": "true",
+        "proxy_country": "us",
+        "wait": wait_ms,
+    }
+    api_url = "https://api.zenrows.com/v1/?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(api_url, headers={"User-Agent": "rl-coach/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=140) as resp:
+            return resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode("utf-8", errors="replace")[:300]
+        except Exception:
+            pass
+        raise RuntimeError(f"ZenRows HTTP {e.code}: {body}")
+
+
 async def fetch_profile_via_api(platform: str, username: str) -> dict:
     """
     Fetch Tracker's internal JSON API through ZenRows (residential IP + Cloudflare
@@ -205,35 +230,26 @@ async def debug_explore(platform: str, username: str) -> dict:
     except Exception as e:
         out["profile_error"] = f"{type(e).__name__}: {e}"
 
-    candidates = [
-        f"https://api.tracker.gg/api/v2/rocket-league/standard/matches/{platform}/{username}?",
-        f"https://api.tracker.gg/api/v1/rocket-league/player-history/{platform}/{username}",
-        f"https://api.tracker.gg/api/v2/rocket-league/standard/matches/{platform}/{username}?next=null",
-    ]
-    out["match_attempts"] = []
-    for murl in candidates:
-        attempt = {"url": murl}
-        try:
-            body = await asyncio.to_thread(_fetch_via_zenrows_raw, murl, False)
-            attempt["len"] = len(body)
-            try:
-                mj = json.loads(body)
-                attempt["top_keys"] = list(mj.keys()) if isinstance(mj, dict) else "not-dict"
-                mdata = mj.get("data") if isinstance(mj, dict) else None
-                matches = mdata.get("matches") if isinstance(mdata, dict) else mdata
-                if isinstance(matches, list):
-                    attempt["match_count"] = len(matches)
-                    if matches:
-                        attempt["first_match"] = json.dumps(matches[0])[:1500]
-                    out["matches_ok"] = True
-            except Exception as je:
-                attempt["not_json"] = str(je)[:100]
-                attempt["head"] = body[:150]
-        except Exception as e:
-            attempt["error"] = f"{type(e).__name__}: {e}"[:200]
-        out["match_attempts"].append(attempt)
-        if out.get("matches_ok"):
-            break
+    # Scrape the rendered matches PAGE (not the API, which needs Tracker's own
+    # auth) and report what markup/state it contains, so we can locate matches.
+    murl = f"https://rocketleague.tracker.network/rocket-league/profile/{platform}/{username}/matches"
+    try:
+        html = await asyncio.to_thread(_fetch_via_zenrows_wait, murl, "8000")
+        out["matches_page_len"] = len(html)
+        lower = html.lower()
+        out["match_markers"] = {
+            mk: (mk.lower() in lower)
+            for mk in [
+                "match__", "match-row", "matches", "playlist", "Win", "Loss",
+                "__INITIAL_STATE__", "sessions", "score",
+            ]
+        }
+        idx = html.find("match__")
+        if idx == -1:
+            idx = lower.find("match")
+        out["match_context"] = html[max(0, idx - 200): idx + 1800] if idx != -1 else None
+    except Exception as e:
+        out["matches_error"] = f"{type(e).__name__}: {e}"[:300]
     return out
 
 

@@ -97,10 +97,6 @@ def build_profile_from_api(api_json: dict) -> dict:
         tier_meta = (stats.get("tier") or {}).get("metadata") or {}
         rank = (tier_meta.get("name") or "Unranked").strip() or "Unranked"
 
-        # Skip casual / genuinely unranked modes -- the coach cares about ranks.
-        if rank.lower() == "unranked":
-            continue
-
         try:
             mmr = int((stats.get("rating") or {}).get("value") or 0)
         except (TypeError, ValueError):

@@ -7,7 +7,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from scraper import get_player_profile, ScrapeBlockedError
+from scraper import get_player_profile, ScrapeBlockedError, debug_explore
 from data_processor import build_manual_profile
 from ai_coach import generate_coaching_response, generate_initial_analysis
 
@@ -74,6 +74,13 @@ def _has_ranked_data(profile: dict) -> bool:
 @app.get("/")
 def read_root():
     return {"message": "Rocket League AI Assistant Backend active!"}
+
+
+@app.post("/api/v1/debug/explore")
+@limiter.limit("10/minute")
+async def debug_explore_endpoint(request: Request, body: PlayerRequest):
+    """Temporary: probe the matches page markup so we can extract recent games."""
+    return await debug_explore(body.platform, body.username)
 
 
 # ---------------------------------------------------------------- lookup ----
