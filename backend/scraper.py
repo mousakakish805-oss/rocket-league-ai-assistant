@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -157,8 +158,18 @@ def _fetch_via_zenrows_raw(target_url: str, render: bool) -> str:
         params["js_render"] = "true"
     api_url = "https://api.zenrows.com/v1/?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(api_url, headers={"User-Agent": "rl-coach/1.0"})
-    with urllib.request.urlopen(req, timeout=90) as resp:
-        return resp.read().decode("utf-8", errors="replace")
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            return resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        # ZenRows puts a descriptive JSON message in the error body (e.g. an
+        # out-of-credits or concurrency-limit reason) -- surface it.
+        body = ""
+        try:
+            body = e.read().decode("utf-8", errors="replace")[:400]
+        except Exception:
+            pass
+        raise RuntimeError(f"ZenRows HTTP {e.code}: {body}")
 
 
 async def fetch_profile_via_api(platform: str, username: str) -> dict:
