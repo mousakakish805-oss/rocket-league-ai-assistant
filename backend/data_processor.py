@@ -65,6 +65,26 @@ def build_profile_from_api(api_json: dict) -> dict:
     data = (api_json or {}).get("data") or {}
     segments = data.get("segments") or []
 
+    # Lifetime overview stats (wins, goals, goal/shot ratio, assists, saves...).
+    overview = {}
+    ov_seg = next((s for s in segments if s.get("type") == "overview"), None)
+    if ov_seg:
+        ov_stats = ov_seg.get("stats") or {}
+        wanted = {
+            "wins": "Wins",
+            "goals": "Goals",
+            "assists": "Assists",
+            "saves": "Saves",
+            "shots": "Shots",
+            "goalShotRatio": "Goal/Shot Ratio",
+            "mVPs": "MVPs",
+            "score": "Score",
+        }
+        for key, label in wanted.items():
+            v = ov_stats.get(key)
+            if isinstance(v, dict) and v.get("displayValue") is not None:
+                overview[label] = v.get("displayValue")
+
     ranked = {}
     for seg in segments:
         if seg.get("type") != "playlist":
@@ -98,7 +118,7 @@ def build_profile_from_api(api_json: dict) -> dict:
         ranked[name] = entry
 
     return {
-        "overview": {},
+        "overview": overview,
         "ranked_playlists": ranked,
         "identified_weaknesses": identify_weaknesses(ranked),
         "source": "scraped",

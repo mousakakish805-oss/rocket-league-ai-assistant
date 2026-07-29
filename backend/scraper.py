@@ -207,7 +207,7 @@ async def debug_explore(platform: str, username: str) -> dict:
 
     try:
         murl = TRACKER_MATCHES_API.format(platform=platform, username=username)
-        body = await asyncio.to_thread(_fetch_via_zenrows_raw, murl, False)
+        body = await asyncio.to_thread(_fetch_via_zenrows_raw, murl, True)
         mj = json.loads(body)
         out["matches_top_keys"] = list(mj.keys()) if isinstance(mj, dict) else "not-dict"
         mdata = mj.get("data") if isinstance(mj, dict) else None
