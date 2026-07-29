@@ -262,7 +262,12 @@ async def get_player_profile(platform: str, username: str) -> dict:
     usable data comes back, so callers can fall back to manual entry.
     """
     # Imported here to avoid any import-order coupling at module load.
-    from data_processor import parse_player_stats, build_profile_from_api
+    from data_processor import (
+        parse_player_stats,
+        build_profile_from_api,
+        parse_recent_matches,
+        summarize_matches,
+    )
 
     if ZENROWS_KEY:
         try:
@@ -272,6 +277,22 @@ async def get_player_profile(platform: str, username: str) -> dict:
         profile = build_profile_from_api(api_json)
         if not profile.get("ranked_playlists"):
             raise ScrapeBlockedError("No ranked playlists returned for this profile.")
+
+        # Recent matches are a bonus: if this fetch fails, keep the profile
+        # rather than failing the whole lookup.
+        try:
+            murl = (
+                "https://rocketleague.tracker.network/rocket-league/profile/"
+                f"{platform}/{username}/matches"
+            )
+            html = await asyncio.to_thread(_fetch_via_zenrows_wait, murl, "8000")
+            matches = parse_recent_matches(html, limit=10)
+            if matches:
+                profile["recent_matches"] = matches
+                profile["recent_form"] = summarize_matches(matches)
+        except Exception as e:
+            print(f"[scrape] recent matches unavailable: {e}")
+
         return profile
 
     html = await scrape_rocket_league_stats(platform, username)

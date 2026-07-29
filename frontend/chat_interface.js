@@ -43,6 +43,9 @@ const els = {
   metersList: document.getElementById("meters-list"),
   lifetimeGrid: document.getElementById("lifetime-grid"),
   lifetimeEmpty: document.getElementById("lifetime-empty"),
+  matchesPanel: document.getElementById("matches-panel"),
+  matchesList: document.getElementById("matches-list"),
+  recentForm: document.getElementById("recent-form"),
   weaknessNote: document.getElementById("weakness-note"),
   activateCoach: document.getElementById("activate-coach"),
   newSearch: document.getElementById("new-search"),
@@ -170,6 +173,37 @@ function renderLifetime(overview) {
   });
 }
 
+function renderMatches(matches, formSummary) {
+  els.matchesList.innerHTML = "";
+
+  if (!matches || matches.length === 0) {
+    els.matchesPanel.hidden = true;
+    return;
+  }
+
+  els.recentForm.textContent = formSummary || "";
+
+  matches.forEach((m) => {
+    const isWin = (m.result || "").toLowerCase() === "win";
+    const change = Number(m.mmr_change);
+    const hasChange = Number.isFinite(change) && change !== 0;
+    const changeText = hasChange ? (change > 0 ? `+${change}` : `${change}`) : "";
+
+    const row = document.createElement("div");
+    row.className = `match-row match-row--${isWin ? "win" : "loss"}`;
+    row.innerHTML = `
+      <span class="match-result">${isWin ? "W" : "L"}</span>
+      <span class="match-playlist">${escapeHtml(playlistShort(m.playlist || ""))}</span>
+      <span class="match-rank">${escapeHtml(m.rank || "")}</span>
+      <span class="match-mmr">${m.mmr ? m.mmr : ""}</span>
+      <span class="match-change ${change > 0 ? "is-up" : "is-down"}">${escapeHtml(changeText)}</span>
+    `;
+    els.matchesList.appendChild(row);
+  });
+
+  els.matchesPanel.hidden = false;
+}
+
 function renderWeaknesses(weaknesses) {
   if (!weaknesses || weaknesses.length === 0) {
     els.weaknessNote.hidden = true;
@@ -192,6 +226,7 @@ function showStats(profile, player) {
 
   renderMeters(profile.ranked_playlists);
   renderLifetime(profile.overview);
+  renderMatches(profile.recent_matches, profile.recent_form);
   renderWeaknesses(profile.identified_weaknesses);
 
   showView("stats");

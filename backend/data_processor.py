@@ -121,6 +121,79 @@ def build_profile_from_api(api_json: dict) -> dict:
     }
 
 
+def parse_recent_matches(html_content: str, limit: int = 10) -> list:
+    """
+    Parses the rendered Tracker /matches page into a list of recent games.
+
+    Each match block looks like:
+        <div class="match">
+          <div class="match__result match__result--victory"></div>
+          <div class="match__metadata">
+            <div class="match__metadata--result"> Win </div>
+            <div class="match__metadata--playlist">Ranked Duel 1v1</div>
+          </div>
+          <div class="match__rating">
+            <img alt="Platinum I">
+            <div class="match__rating--value">657</div>
+            <div class="match__rating--change up">21</div>
+            <div class="match__rating--division">Division I</div>
+    Rows whose result isn't Win/Loss (e.g. a "6 Matches" session summary) are
+    skipped so the coach only sees actual games.
+    """
+    soup = BeautifulSoup(html_content, "html.parser")
+    matches = []
+
+    for block in soup.find_all("div", class_="match"):
+        result_elem = block.find("div", class_="match__metadata--result")
+        result = result_elem.get_text(strip=True) if result_elem else ""
+        if result.lower() not in ("win", "loss"):
+            continue  # session summary row, not a single match
+
+        playlist_elem = block.find("div", class_="match__metadata--playlist")
+        playlist = playlist_elem.get_text(strip=True) if playlist_elem else "Unknown"
+
+        entry = {"result": result.title(), "playlist": playlist}
+
+        value_elem = block.find("div", class_="match__rating--value")
+        if value_elem:
+            try:
+                entry["mmr"] = int(value_elem.get_text(strip=True).replace(",", ""))
+            except ValueError:
+                pass
+
+        change_elem = block.find("div", class_="match__rating--change")
+        if change_elem:
+            classes = change_elem.get("class") or []
+            sign = -1 if "down" in classes else 1
+            try:
+                entry["mmr_change"] = sign * abs(
+                    int(change_elem.get_text(strip=True).replace(",", "").lstrip("+-"))
+                )
+            except ValueError:
+                pass
+
+        img = block.find("img", class_="match__rating--icon")
+        if img and img.get("alt"):
+            entry["rank"] = img.get("alt").strip()
+
+        matches.append(entry)
+        if len(matches) >= limit:
+            break
+
+    return matches
+
+
+def summarize_matches(matches: list) -> str:
+    """One-line form summary the coach can reason about (e.g. '6W-4L, +38 MMR')."""
+    if not matches:
+        return ""
+    wins = sum(1 for m in matches if m.get("result") == "Win")
+    losses = len(matches) - wins
+    net = sum(m.get("mmr_change", 0) for m in matches)
+    sign = "+" if net >= 0 else ""
+    return f"Last {len(matches)} matches: {wins}W-{losses}L, net {sign}{net} MMR"
+
+
 def parse_player_stats(html_content: str) -> dict:
     """
     Parses Rocket League Tracker HTML and extracts each playlist's current rank

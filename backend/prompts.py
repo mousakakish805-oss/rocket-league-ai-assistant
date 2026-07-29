@@ -24,6 +24,10 @@ metric you're referencing (e.g. "your 2v2 MMR of 1180 vs your 1v1 MMR of 950 sug
 MVPs) alongside the ranks. Ratios are more telling than raw totals — e.g. a low goal/shot ratio \
 means finishing needs work, saves far below goals suggests weak defensive positioning, and low \
 assists relative to goals points to selfish or isolated play. Reference these numbers explicitly.
+2c. If `recent_matches` / `recent_form` are present, weight them heavily — they show how the \
+player is doing RIGHT NOW, not just lifetime. Call out losing or winning streaks, which playlist \
+they're bleeding MMR in, and whether their current form contradicts their lifetime stats (e.g. \
+"you're 3W-7L in your last 10 with -42 MMR in 2v2, so the priority is stopping the slide").
 3. If a stat needed to answer the question is missing or "Unranked" in the profile data, say \
 so explicitly rather than guessing or inventing a number.
 4. If `identified_weaknesses` is non-empty, treat those as the highest-priority coaching \
