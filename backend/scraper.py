@@ -205,20 +205,35 @@ async def debug_explore(platform: str, username: str) -> dict:
     except Exception as e:
         out["profile_error"] = f"{type(e).__name__}: {e}"
 
-    try:
-        murl = TRACKER_MATCHES_API.format(platform=platform, username=username)
-        body = await asyncio.to_thread(_fetch_via_zenrows_raw, murl, True)
-        mj = json.loads(body)
-        out["matches_top_keys"] = list(mj.keys()) if isinstance(mj, dict) else "not-dict"
-        mdata = mj.get("data") if isinstance(mj, dict) else None
-        out["data_kind"] = type(mdata).__name__
-        matches = mdata.get("matches") if isinstance(mdata, dict) else mdata
-        out["matches_ok"] = True
-        out["match_count"] = len(matches) if isinstance(matches, list) else None
-        out["first_match"] = json.dumps(matches[0])[:2000] if matches else None
-    except Exception as e:
-        out["matches_ok"] = False
-        out["matches_error"] = f"{type(e).__name__}: {e}"
+    candidates = [
+        f"https://api.tracker.gg/api/v2/rocket-league/standard/matches/{platform}/{username}?",
+        f"https://api.tracker.gg/api/v1/rocket-league/player-history/{platform}/{username}",
+        f"https://api.tracker.gg/api/v2/rocket-league/standard/matches/{platform}/{username}?next=null",
+    ]
+    out["match_attempts"] = []
+    for murl in candidates:
+        attempt = {"url": murl}
+        try:
+            body = await asyncio.to_thread(_fetch_via_zenrows_raw, murl, False)
+            attempt["len"] = len(body)
+            try:
+                mj = json.loads(body)
+                attempt["top_keys"] = list(mj.keys()) if isinstance(mj, dict) else "not-dict"
+                mdata = mj.get("data") if isinstance(mj, dict) else None
+                matches = mdata.get("matches") if isinstance(mdata, dict) else mdata
+                if isinstance(matches, list):
+                    attempt["match_count"] = len(matches)
+                    if matches:
+                        attempt["first_match"] = json.dumps(matches[0])[:1500]
+                    out["matches_ok"] = True
+            except Exception as je:
+                attempt["not_json"] = str(je)[:100]
+                attempt["head"] = body[:150]
+        except Exception as e:
+            attempt["error"] = f"{type(e).__name__}: {e}"[:200]
+        out["match_attempts"].append(attempt)
+        if out.get("matches_ok"):
+            break
     return out
 
 
