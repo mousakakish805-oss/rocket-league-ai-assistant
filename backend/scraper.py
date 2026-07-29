@@ -270,28 +270,42 @@ async def get_player_profile(platform: str, username: str) -> dict:
     )
 
     if ZENROWS_KEY:
-        try:
-            api_json = await fetch_profile_via_api(platform, username)
-        except Exception as e:
-            raise ScrapeBlockedError(f"Profile API fetch failed: {e}")
+        # ZenRows intermittently returns 422 ("could not get content"); a retry
+        # almost always succeeds, so don't fail the lookup on the first miss.
+        api_json = None
+        last_err = None
+        for attempt in range(3):
+            try:
+                api_json = await fetch_profile_via_api(platform, username)
+                break
+            except Exception as e:
+                last_err = e
+                print(f"[scrape] profile attempt {attempt + 1} failed: {e}")
+                await asyncio.sleep(1.5)
+        if api_json is None:
+            raise ScrapeBlockedError(f"Profile API fetch failed: {last_err}")
         profile = build_profile_from_api(api_json)
         if not profile.get("ranked_playlists"):
             raise ScrapeBlockedError("No ranked playlists returned for this profile.")
 
         # Recent matches are a bonus: if this fetch fails, keep the profile
         # rather than failing the whole lookup.
-        try:
-            murl = (
-                "https://rocketleague.tracker.network/rocket-league/profile/"
-                f"{platform}/{username}/matches"
-            )
-            html = await asyncio.to_thread(_fetch_via_zenrows_wait, murl, "8000")
-            matches = parse_recent_matches(html, limit=10)
-            if matches:
-                profile["recent_matches"] = matches
-                profile["recent_form"] = summarize_matches(matches)
-        except Exception as e:
-            print(f"[scrape] recent matches unavailable: {e}")
+        murl = (
+            "https://rocketleague.tracker.network/rocket-league/profile/"
+            f"{platform}/{username}/matches"
+        )
+        for attempt in range(2):
+            try:
+                html = await asyncio.to_thread(_fetch_via_zenrows_wait, murl, "12000")
+                matches = parse_recent_matches(html, limit=10)
+                print(f"[scrape] matches attempt {attempt + 1}: parsed {len(matches)}")
+                if matches:
+                    profile["recent_matches"] = matches
+                    profile["recent_form"] = summarize_matches(matches)
+                    break
+            except Exception as e:
+                print(f"[scrape] matches attempt {attempt + 1} failed: {e}")
+                await asyncio.sleep(1.5)
 
         return profile
 
