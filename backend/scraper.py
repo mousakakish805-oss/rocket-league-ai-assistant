@@ -178,23 +178,33 @@ TRACKER_MATCHES_API = "https://api.tracker.gg/api/v2/rocket-league/standard/matc
 async def debug_explore(platform: str, username: str) -> dict:
     """Temporary: explore the overview (lifetime) stats and matches API shape."""
     out = {}
-    prof = await fetch_profile_via_api(platform, username)
-    segs = (prof.get("data") or {}).get("segments") or []
-    ov = next((s for s in segs if s.get("type") == "overview"), None)
-    if ov:
-        stats = ov.get("stats") or {}
-        out["overview_stats"] = {
-            k: (v or {}).get("displayValue") for k, v in stats.items()
-        }
+    try:
+        prof = await fetch_profile_via_api(platform, username)
+        segs = (prof.get("data") or {}).get("segments") or []
+        out["segment_types"] = [s.get("type") for s in segs]
+        ov = next((s for s in segs if s.get("type") == "overview"), None)
+        if ov:
+            stats = ov.get("stats") or {}
+            out["overview_stats"] = {
+                k: (v.get("displayValue") if isinstance(v, dict) else v)
+                for k, v in stats.items()
+            }
+        else:
+            out["overview_note"] = "no overview segment found"
+    except Exception as e:
+        out["profile_error"] = f"{type(e).__name__}: {e}"
+
     try:
         murl = TRACKER_MATCHES_API.format(platform=platform, username=username)
         body = await asyncio.to_thread(_fetch_via_zenrows_raw, murl, False)
         mj = json.loads(body)
-        mdata = mj.get("data")
+        out["matches_top_keys"] = list(mj.keys()) if isinstance(mj, dict) else "not-dict"
+        mdata = mj.get("data") if isinstance(mj, dict) else None
+        out["data_kind"] = type(mdata).__name__
         matches = mdata.get("matches") if isinstance(mdata, dict) else mdata
         out["matches_ok"] = True
         out["match_count"] = len(matches) if isinstance(matches, list) else None
-        out["first_match"] = json.dumps(matches[0])[:1800] if matches else None
+        out["first_match"] = json.dumps(matches[0])[:2000] if matches else None
     except Exception as e:
         out["matches_ok"] = False
         out["matches_error"] = f"{type(e).__name__}: {e}"
