@@ -122,6 +122,31 @@ body::before {
 .view-sub { margin: 0 0 18px; color: var(--text-muted); font-size: 14px; line-height: 1.55; }
 .view-hint { margin: 14px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
 
+/* While a lookup is running the hint carries live progress text -- a slow pulse
+   plus a leading dot signals "still working" during the long cold-start wait. */
+.view-hint.is-working {
+  color: var(--boost-blue);
+  animation: hint-pulse 1.8s ease-in-out infinite;
+}
+.view-hint.is-working::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--boost-blue);
+  box-shadow: var(--glow-cyan);
+  vertical-align: middle;
+}
+@keyframes hint-pulse {
+  0%, 100% { opacity: 0.65; }
+  50%      { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .view-hint.is-working { animation: none; opacity: 1; }
+}
+
 .choice-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 
 /* ---- Stats dashboard ---- */

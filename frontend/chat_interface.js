@@ -234,14 +234,77 @@ function showStats(profile, player) {
 
 // ---------- Step 1: lookup ----------
 
+// ---------- Cold-start handling ----------
+// The backend runs on free-tier hosting that spins down when idle, so the first
+// request after a quiet period takes ~50s just to wake the container. Two
+// mitigations: (1) ping the backend the moment the page loads, so it wakes while
+// the visitor is still typing, and (2) rotate the status text during a lookup so
+// a long wait reads as deliberate progress rather than a frozen page.
+
+let backendWarm = false;
+let warmPromise = null;
+
+function warmBackend() {
+  if (warmPromise) return warmPromise;
+  warmPromise = fetch(`${API_BASE}/`, { method: "GET", cache: "no-store" })
+    .then((res) => {
+      if (res.ok) backendWarm = true;
+    })
+    .catch(() => {
+      /* Pre-warm is best-effort; the real lookup reports any actual error. */
+    });
+  return warmPromise;
+}
+
+// Messages differ by starting state: a cold server needs the wait explained,
+// a warm one is just doing the (still slow) live data fetch.
+const COLD_STAGES = [
+  { after: 0, text: "Waking up the server — free hosting sleeps when idle, so this first step can take up to a minute." },
+  { after: 20000, text: "Still waking up… hang tight, this is the slow part." },
+  { after: 40000, text: "Almost there — fetching your stats now." },
+];
+
+const WARM_STAGES = [
+  { after: 0, text: "Fetching your live ranks and lifetime stats…" },
+  { after: 15000, text: "Pulling your recent matches…" },
+  { after: 35000, text: "Almost done — putting your profile together." },
+];
+
+let hintTimers = [];
+
+function startHintCycle() {
+  stopHintCycle();
+  const stages = backendWarm ? WARM_STAGES : COLD_STAGES;
+  stages.forEach((stage) => {
+    if (stage.after === 0) {
+      els.lookupHint.textContent = stage.text;
+      return;
+    }
+    hintTimers.push(setTimeout(() => {
+      els.lookupHint.textContent = stage.text;
+    }, stage.after));
+  });
+}
+
+function stopHintCycle() {
+  hintTimers.forEach(clearTimeout);
+  hintTimers = [];
+}
+
 function setLookupBusy(busy) {
   els.lookupBtn.disabled = busy;
   els.lookupBtn.textContent = busy ? "Looking up…" : "Continue";
   els.platform.disabled = busy;
   els.username.disabled = busy;
-  els.lookupHint.textContent = busy
-    ? "Fetching live stats… this can take up to a minute."
-    : "First lookup can take up to a minute while the server wakes up.";
+  els.lookupHint.classList.toggle("is-working", busy);
+
+  if (busy) {
+    startHintCycle();
+  } else {
+    stopHintCycle();
+    els.lookupHint.textContent =
+      "Looking up live stats takes a moment — the server may need to wake up first.";
+  }
 }
 
 async function lookupProfile(platform, username) {
@@ -476,3 +539,9 @@ els.chatForm.addEventListener("submit", (e) => {
   els.chatInput.value = "";
   sendMessage(query);
 });
+
+// ---------- Startup ----------
+// Kick the backend awake immediately, so the container is (hopefully) up by the
+// time the visitor finishes typing a username. Costs one tiny request and turns
+// the worst-case first lookup from ~50s of dead air into a normal wait.
+warmBackend();
